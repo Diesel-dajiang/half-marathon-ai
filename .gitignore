@@ -1,0 +1,6 @@
+node_modules
+dist
+.codebuddy
+*.log
+.env
+.env.local
