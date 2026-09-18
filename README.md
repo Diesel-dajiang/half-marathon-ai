@@ -108,18 +108,23 @@ VITE_DEEPSEEK_API_KEY=你的key
 
 ---
 
-## 部署（CodeBuddy Cloud Studio）
+## 部署（Render · 免费固定域名）
 
-后端零依赖，远程无需 `npm install`，直接：
+后端零依赖、容器化，用现有 `Dockerfile` + `render.yaml` 即可在 Render 免费档跑（前端 + `/api` 同一域名，休眠后冷启动约 30s）。
 
 ```bash
-npm run build                 # 构建前端到 dist/
-node server/index.js          # 启动（PORT 默认 8080，生产托管 dist/）
+# 1) 推到 GitHub
+git remote add origin https://github.com/<你的用户名>/half-marathon-coach.git
+git push -u origin main
+
+# 2) 在 https://dashboard.render.com 点 New+ → Blueprint，连接该仓库，Apply 即可。
+#    固定域名形如：https://half-marathon-coach.onrender.com
 ```
 
-平台入口：`http://<preview>/`。接口与页面同源，前端相对路径 `/api/*` 自动可用。
+平台入口：`https://half-marathon-coach.onrender.com/`。接口与页面同源，前端相对路径 `/api/*` 自动可用。
+Health Auto Export 接收地址：`https://half-marathon-coach.onrender.com/api/health-export`
 
-> 注意：演示环境已在后端写入 1 条测试推送记录（2026-09-18 8km）。如需清空，删除远端 `server/data/workouts.json` 即可。
+> 注意：Render 免费版文件系统为临时盘，重新部署后 `server/data/workouts.json` 会重置（演示数据会从前端 localStorage 兜底）；如需持久化推送数据，建议升级套餐并挂载 Render Disk。
 
 ---
 
