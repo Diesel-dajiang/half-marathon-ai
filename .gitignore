@@ -4,3 +4,5 @@ dist
 *.log
 .env
 .env.local
+# 后端运行时生成的跑步记录（推送写入）
+server/data/

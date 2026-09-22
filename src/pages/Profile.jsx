@@ -3,12 +3,13 @@ import JSZip from 'jszip'
 import { useNavigate } from 'react-router-dom'
 import {
   User, Settings, Watch, Plus, Footprints, Crown, ShieldAlert, FileText,
-  Sparkles, Check, Link2, Link2Off, RotateCcw, ScanLine,
+  Sparkles, Check, Link2, Link2Off, RotateCcw, ScanLine, Zap,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useApp } from '../store/AppContext.jsx'
 import { fmtDate, fmtPace, parseTime } from '../lib/format.js'
 import { healthExportUrl } from '../lib/sync.js'
+import { normWorkout, isHAESamples, haeSamplesToRaw, haeMetricsToRaw } from '../../lib/normalize.mjs'
 import { Card, Sheet, Btn, SectionTitle, Bar } from '../components/ui.jsx'
 
 const REPLACE_LOW = 500
@@ -141,46 +142,56 @@ export default function Profile() {
     if (!f) return
     setImportMsg('解析中…')
     try {
-      let payload
+      // 把任意支持的 Apple 健康 / HAE 导出解析为「原始记录」
+      const jsonToRaws = (j) => {
+        if (Array.isArray(j)) {
+          if (isHAESamples(j)) return haeSamplesToRaw(j)
+          return j.filter(looksLikeWorkout)
+        }
+        if (j && typeof j === 'object') {
+          if (j.data?.metrics) return haeMetricsToRaw(j.data.metrics)
+          if (Array.isArray(j.workouts)) return j.workouts
+          if (Array.isArray(j.items)) return j.items
+          return findWorkoutArrays(j)
+        }
+        return []
+      }
+      let raws = []
+      const stats = {}
       if (/\.zip$/i.test(f.name)) {
         const zip = await JSZip.loadAsync(f)
-        const workouts = []
-        const seen = []
-        const xstats = {}
         for (const name of Object.keys(zip.files)) {
           const entry = zip.files[name]
           if (entry.dir) continue
-          seen.push(name.split('/').pop())
-          if (/\.json$/i.test(name)) {
-            try {
-              workouts.push(...findWorkoutArrays(JSON.parse(await entry.async('string'))))
-            } catch { /* 跳过解析失败的文件 */ }
-          } else if (/\.csv$/i.test(name)) {
-            try { workouts.push(...csvToWorkouts(await entry.async('string'))) } catch { /* 同上 */ }
-          } else if (/\.xml$/i.test(name)) {
-            try { workouts.push(...xmlToWorkouts(await entry.async('string'), xstats)) } catch { /* 同上 */ }
-          }
+          const text = await entry.async('string')
+          try {
+            if (/\.json$/i.test(name)) raws.push(...jsonToRaws(JSON.parse(text)))
+            else if (/\.csv$/i.test(name)) raws.push(...csvToWorkouts(text))
+            else if (/\.xml$/i.test(name)) raws.push(...xmlToWorkouts(text, stats))
+          } catch { /* 跳过无法解析的文件 */ }
         }
-        if (!workouts.length) {
-          const list = seen.slice(0, 8).join('、') + (seen.length > 8 ? ` 等 ${seen.length} 个` : '')
-          const diag = xstats.workouts ? `｜发现 <Workout> ${xstats.workouts} 个、跑步 ${xstats.running} 个` : ''
-          throw new Error(`ZIP 内未识别出跑步数据（${list}${diag}）。把这个提示截图发我`)
-        }
-        payload = JSON.stringify(workouts)
       } else {
-        payload = await f.text()
+        const text = await f.text()
+        if (/\.xml$/i.test(f.name) || text.trim().startsWith('<')) raws.push(...xmlToWorkouts(text, stats))
+        else if (/\.csv$/i.test(f.name)) raws.push(...csvToWorkouts(text))
+        else raws.push(...jsonToRaws(JSON.parse(text)))
       }
-      const res = await fetch('/api/health-export', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-      }).then((x) => x.json())
-      if (res.ok) {
-        setImportMsg(`已导入 ${res.added} 条（共 ${res.total} 条），正在刷新…`)
-        await syncHealth()
-      } else {
-        setImportMsg('导入失败：' + (res.error || '格式不支持'))
+      // 前端归一化，直接合并到本地（无需后端，沙箱 / 任意静态托管都可用）
+      const workouts = raws.map(normWorkout).filter(Boolean)
+      if (!workouts.length) {
+        const diag = stats.workouts ? `（发现 <Workout> ${stats.workouts} 个、跑步 ${stats.running} 个）` : ''
+        throw new Error('未识别出跑步数据' + diag + '。把截图发我，我帮你调格式。')
       }
+      dispatch({ type: 'MERGE_WORKOUTS', workouts })
+      // 尽量再推一份到后端（部署后用于多设备共享；本地无后端时静默忽略）
+      try {
+        await fetch('/api/health-export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(workouts),
+        }).then((x) => x.json())
+      } catch { /* 无后端，忽略 */ }
+      setImportMsg(`已导入 ${workouts.length} 条 Apple 跑步记录，已合并到本地（自动去重）。去「记录」页查看吧。`)
     } catch (err) {
       setImportMsg('导入失败：' + (err?.message || '文件无法解析'))
     } finally {
@@ -297,9 +308,27 @@ export default function Profile() {
             navigator.clipboard?.writeText(healthExportUrl())
           }} className="tap flex-1 bg-card2 border border-line text-ink rounded-lg py-2 text-xs font-medium">复制接收地址</button>
         </div>
-        <input ref={fileRef} type="file" accept="application/json,.json,.zip" className="hidden" onChange={onImportFile} />
-        <button onClick={() => fileRef.current?.click()} className="tap w-full bg-card2 border border-line text-ink rounded-lg py-2 text-xs font-medium mt-2">📂 导入文件（Apple 健康 / HAE 导出的 ZIP、JSON）</button>
+        <input ref={fileRef} type="file" accept=".zip,.json,.xml,.csv,application/json" className="hidden" onChange={onImportFile} />
+        <button onClick={() => fileRef.current?.click()} className="tap w-full bg-card2 border border-line text-ink rounded-lg py-2 text-xs font-medium mt-2">📂 导入 Apple 健康数据（iPhone 导出 ZIP / export.xml / HAE 的 CSV）</button>
         {importMsg && <div className="text-[11px] text-green mt-2">{importMsg}</div>}
+
+        {/* 全自动推送配置（每天自动把 iPhone 跑步数据发到后端） */}
+        <div className="mt-3 pt-3 border-t border-line">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap size={14} className="text-primary" />
+            <span className="text-sm text-ink font-medium">全自动推送（每天自动同步）</span>
+          </div>
+          <div className="text-[11px] text-muted space-y-1.5">
+            <div>把下方「接收地址」填进推送工具，设为「每天」自动发送，打开 App 就有最新跑步数据：</div>
+            <div className="text-ink break-all bg-card2 rounded p-2 leading-relaxed">{healthExportUrl() || '—'}</div>
+            <div className="font-medium text-ink">方式一 · Health Auto Export（最省事，App Store 付费）</div>
+            <div>App 内 → 自动化 → 新建「URL」自动化 → 地址填上面 → 请求格式选 <b>Workouts</b>(每条跑步一条记录,推荐);<b>Samples</b> 也支持但会把同一天多次跑步合并成一天总量 → 频率「每天」→ 开启。</div>
+            <div className="font-medium text-ink">方式二 · iPhone 快捷指令（免费）</div>
+            <div>「快捷指令」→ 自动化 → 每天 9:00 → 添加「获取 URL 内容」：方法 POST、URL 填上面、请求体取「健康」里昨天的跑步记录（JSON）→ 完成。零成本全自动。</div>
+          </div>
+          <button onClick={() => navigator.clipboard?.writeText(healthExportUrl())}
+            className="tap w-full bg-card2 border border-line text-ink rounded-lg py-2 text-xs font-medium mt-2">复制接收地址</button>
+        </div>
 
         {/* Strava 一键连接（获取真实跑步数据） */}
         <div className="mt-3 pt-3 border-t border-line">
@@ -319,7 +348,7 @@ export default function Profile() {
         </div>
 
         <div className="text-[11px] text-muted mt-3">
-          说明：网页无法直接读取 Apple HealthKit（仅原生 App 可访问）。默认打开即自动同步示例跑步数据；如需接入你手机的真实数据，可连接 Strava，或用「Health Auto Export」把健康数据推送到上方接收地址（高级用法）。
+          说明：网页无法直接读取 Apple HealthKit（仅原生 App 可访问），因此用「推送」方式自动获取——Health Auto Export 或 iPhone 快捷指令每天把跑步数据 POST 到接收地址，打开 App 即自动合并。无后端时也可用上方「导入」手动上传。真实数据接入后，示例数据会被自动去重。
         </div>
       </Card>
 
