@@ -71,8 +71,10 @@ function normWorkout(raw) {
   const date = parseDate(raw.startDate || raw.date || raw.workoutDate || raw.endDate)
   if (!date) return null
   let distRaw = raw.distance ?? raw.distanceKm ?? raw.totalDistance
-  // HAE 的 workout 距离单位可能为米
-  if (distRaw != null && ['m', 'meter', 'meters'].includes(String(raw.distanceUnit || raw.unit || '').toLowerCase())) distRaw = Number(distRaw) / 1000
+  // HAE 的 workout 距离单位可能为米 / 英里 / 千米
+  const distUnit = String(raw.distanceUnit || raw.totalDistanceUnit || raw.unit || '').toLowerCase()
+  if (distRaw != null && ['m', 'meter', 'meters'].includes(distUnit)) distRaw = Number(distRaw) / 1000
+  if (distRaw != null && ['mi', 'mile', 'miles'].includes(distUnit)) distRaw = Number(distRaw) * 1.60934
   const distance = toKm(distRaw)
   if (!distance) return null
   let duration = toSec(raw.duration)

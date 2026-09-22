@@ -1,0 +1,10 @@
+name = "half-marathon-ai"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-09-01"
+
+# Cloudflare Pages Functions 用的 KV 命名空间（存跑步记录，重部署不清空）
+# 首次部署前请先执行：npx wrangler kv namespace create WORKOUTS
+# 把输出的 id 填到下面的 id 字段
+[[kv_namespaces]]
+binding = "WORKOUTS"
+id = "REPLACE_WITH_YOUR_KV_ID"
