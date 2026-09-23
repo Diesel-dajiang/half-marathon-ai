@@ -9,9 +9,17 @@
 # 前置（只需做一次）：npx wrangler login
 set -e
 
-echo "== 检查 wrangler 登录状态 =="
-if ! npx wrangler whoami >/dev/null 2>&1; then
-  echo "⚠️ 尚未登录 Cloudflare。请先运行：npx wrangler login（浏览器授权一次），再重试本脚本。"
+echo "== 检查 Cloudflare 凭证 =="
+if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+  echo "⚠️ 未检测到 CLOUDFLARE_API_TOKEN 环境变量（当前为非交互环境，无法用 wrangler login 弹浏览器）。"
+  echo "请先设置："
+  echo "  export CLOUDFLARE_API_TOKEN=你的token"
+  echo "  export CLOUDFLARE_ACCOUNT_ID=你的account_id"
+  echo "（如需每次终端都生效，可把这两行加到 ~/.zshrc）"
+  exit 1
+fi
+if [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+  echo "⚠️ 已设置 CLOUDFLARE_API_TOKEN，但缺少 CLOUDFLARE_ACCOUNT_ID。请一并 export 后重试。"
   exit 1
 fi
 
